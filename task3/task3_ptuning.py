@@ -3,7 +3,7 @@ import copy
 import os
 import xml.dom.minidom
 from transformers import BertTokenizer, BertForMaskedLM, BertForSequenceClassification,BertModel
-from dataset_test import *
+from dataset import *
 import logging
 logging.basicConfig(level=logging.INFO)
 import torch
@@ -17,22 +17,20 @@ from torch.utils.data import DataLoader
 import numpy as np
 from sklearn.metrics import accuracy_score
 from modeling import PTuneForLAMA
-
-
 # args
 parser = argparse.ArgumentParser()
 parser.add_argument("--gpu", type=int, default=1, help="gpu")
-parser.add_argument("--epochs", type=int, default=10, help="learning rate")
+parser.add_argument("--epochs", type=int, default=20, help="learning rate")
 parser.add_argument("--batch_size", type=int, default=500, help="batch_size")
 parser.add_argument("--lr", type=float, default=5e-5, help="learning rate")
 parser.add_argument("--eps", type=float, default=1e-8, help="adam_epsilon")
 parser.add_argument("--seed", type=int, default=0, help="adam_epsilon")
 parser.add_argument("--cpu", type=bool, default=False, help="use cpu")
 parser.add_argument("--template", type=str, default="(3, 3, 3)")
+
+
 args = parser.parse_args()
 
-
-print("start code")
 # set seed
 random.seed(args.seed)
 os.environ['PYTHONHASHSEED'] = str(args.seed)
@@ -64,12 +62,12 @@ class owndataset():
         label = self.labels[idx]
         return text, label
 train_path = "/home/zijian/Scripts_new/all_data_temp_train"
-test_path = "/home/zijian/Scripts_new/all_data_temp_test"
+test_path = "/home/zijian/Scripts_new/zxy_test"
 dev_path = "/home/zijian/Scripts_new/all_data_temp_dev"
 all_data_path = "/home/zijian/Scripts_new/all_data_temp"
-train_datas, train_labels = get_all_taskone_dataset(train_path, all_data_path)
-test_datas, test_labels = get_all_taskone_dataset(test_path, all_data_path)
-dev_datas, dev_labels = get_all_taskone_dataset(dev_path, all_data_path)
+train_datas, train_labels = get_all_taskthree_dataset(train_path)
+test_datas, test_labels = get_all_taskthree_dataset(test_path)
+dev_datas, dev_labels = get_all_taskthree_dataset(dev_path)
 train_dataset = owndataset(train_datas, train_labels)
 test_dataset = owndataset(test_datas, test_labels)
 dev_dataset = owndataset(dev_datas, dev_labels)
@@ -78,13 +76,7 @@ test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=True)
 dev_loader = DataLoader(dev_dataset, batch_size=args.batch_size, shuffle=True)
 
 # model & tokenizer & optimizer
-model = PTuneForLAMA(device, args.template).to(device).to(device)
-
-
-for k,v in model.named_parameters():
-    print('{}: {}'.format(k, v.requires_grad))
-
-
+model = PTuneForLAMA(device, args.template).to(device)
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 optimizer = AdamW(model.parameters(), lr=args.lr)
 num_training_steps = args.epochs * len(train_loader)
@@ -108,8 +100,6 @@ for epoch in range(args.epochs):
         input_ids = input_ids.to(device)
         token_type_ids = token_type_ids.to(device)
         labels_ids = labels_ids.to(device)
-        #print(input_ids)
-       # print(labels_ids)
         loss,logits,hit = model(input_ids, labels_ids,len(input_ids))
         loss.backward()
         optimizer.step()
@@ -117,15 +107,15 @@ for epoch in range(args.epochs):
         optimizer.zero_grad()
         print('/n')
         print(loss)
+torch.save(model, str(args.lr) + " " + str(args.epochs) + " task3_ptuning_checkpoint.pkl")
 
-#model = torch.load("/home/zijian/Scripts_new/5e-05 10 task1_ptuning_checkpoint.pkl").to(device)
-text1 = 'include'
+text1 = 'before'
 tokenized_text1 = tokenizer.tokenize(text1)
-indexed_tokens_include = tokenizer.convert_tokens_to_ids(tokenized_text1)
+indexed_tokens_before = tokenizer.convert_tokens_to_ids(tokenized_text1)
 # exclude number
-text2 = 'except'
+text2 = 'after'
 tokenized_text2 = tokenizer.tokenize(text2)
-indexed_tokens_except = tokenizer.convert_tokens_to_ids(tokenized_text2)
+indexed_tokens_after = tokenizer.convert_tokens_to_ids(tokenized_text2)
 hit = 0
 tp = 0
 tn = 0
@@ -156,20 +146,20 @@ for events, labels in dev_loader:
             label_text = tokenizer.decode(labels_ids[i])
             tokenized_label_text = tokenizer.tokenize(label_text)
             pred_logit = pred_logits[i]
-            if pred_logit[masked_index][indexed_tokens_include] > pred_logit[masked_index][indexed_tokens_except]:
-                pred_id = 'include'
+            if pred_logit[masked_index][indexed_tokens_before] > pred_logit[masked_index][indexed_tokens_after]:
+                pred_id = 'before'
             else:
-                pred_id = 'except'
+                pred_id = 'after'
             result = tokenized_label_text[masked_index]
             if pred_id == result:
                 hit += 1
-            if pred_id == result and pred_id == 'include':
+            if pred_id == result and pred_id == 'before':
                 tp += 1
-            if pred_id == result and pred_id == 'except':
+            if pred_id == result and pred_id == 'after':
                 tn += 1
-            if pred_id != result and pred_id == 'include':
+            if pred_id != result and pred_id == 'before':
                 fp += 1
-            if pred_id != result and pred_id == 'except':
+            if pred_id != result and pred_id == 'after':
                 fn += 1
             all += 1
 print(" dev accuracy is " + str(hit / all))
@@ -183,7 +173,7 @@ tn = 0
 fp = 0
 fn = 0
 all = 0
-
+#model = torch.load("/home/zijian/Scripts_new/5e-05 20 task3_ptuning_checkpoint.pkl").to(device)
 model.eval()
 for events, labels in test_loader:
     with torch.no_grad():
@@ -208,24 +198,23 @@ for events, labels in test_loader:
             label_text = tokenizer.decode(labels_ids[i])
             tokenized_label_text = tokenizer.tokenize(label_text)
             pred_logit = pred_logits[i]
-            if pred_logit[masked_index][indexed_tokens_include] > pred_logit[masked_index][indexed_tokens_except]:
-                pred_id = 'include'
+            if pred_logit[masked_index][indexed_tokens_before] > pred_logit[masked_index][indexed_tokens_after]:
+                pred_id = 'before'
             else:
-                pred_id = 'except'
+                pred_id = 'after'
             result = tokenized_label_text[masked_index]
             if pred_id == result:
                 hit += 1
-            if pred_id == result and pred_id == 'include':
+            if pred_id == result and pred_id == 'before':
                 tp += 1
-            if pred_id == result and pred_id == 'except':
+            if pred_id == result and pred_id == 'after':
                 tn += 1
-            if pred_id != result and pred_id == 'include':
+            if pred_id != result and pred_id == 'before':
                 fp += 1
-            if pred_id != result and pred_id == 'except':
+            if pred_id != result and pred_id == 'after':
                 fn += 1
             all += 1
 print(" test accuracy is " + str(hit / all))
 print(" test evaluate " + str(all) + " tp " + str(tp) + ' tn ' + str(tn) + " fp " + str(fp) + " fn " + str(fn))
 
 print('finish test')
-torch.save(model, str(args.lr) + " " + str(args.epochs) + " task1_ptuning_checkpoint_test_zxy.pkl")
