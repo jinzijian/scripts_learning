@@ -1,6 +1,6 @@
 # scripts learning
 
-## task1
+## task1:Inclusive Sub-event Selection
 ```angular2html
 cd task1
 python task1_finetune.py
